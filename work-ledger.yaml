@@ -1,7 +1,7 @@
 goals:
   - id: G-BENCHMARK
     title: 五套企业级 Doris 数据 Agent 评测
-    status: active
+    status: completed
     success_criteria:
       - 五个行业质量梯度各有独立 Doris 数据库、至少 150 张非空有业务关系表及相应建设资料。
       - 每套覆盖建模、本体、单轮、多轮、探索、报告、反例与安全，并保存独立可验证答案。
@@ -10,15 +10,15 @@ milestones:
   - id: M-FOUNDATION
     goal: G-BENCHMARK
     title: 零售与公共评分工具
-    status: in_progress
+    status: completed
   - id: M-COVERAGE
     goal: G-BENCHMARK
     title: 其余四行业与治理梯度
-    status: planned
+    status: completed
   - id: M-DELIVERY
     goal: G-BENCHMARK
     title: Doris 部署与交付
-    status: planned
+    status: completed
 work_items:
   - id: BENCH-001
     goal: G-BENCHMARK
@@ -52,7 +52,7 @@ work_items:
     goal: G-BENCHMARK
     milestone: M-DELIVERY
     title: 五个 Doris 独立数据库及基准交付
-    status: in_progress
+    status: completed
     priority: P0
     depends_on: [BENCH-002]
     acceptance:
@@ -60,3 +60,5 @@ work_items:
       - 每套数值 QA 经 Doris 实际执行与独立答案核对，偏差有可追溯裁定。
       - 交付用户指南与本地黄金答案路径，完成 CR、PR、Merge 并核对远端提交。
     next_action: 生成固定候选包，核查五库及成绩，公开版走 CI 和评审。
+    "evidence": [".awr/artifacts/benchmark/delivery-receipt.json"]
+    "verification": {"evidence_level":"locally_verified"}
