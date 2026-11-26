@@ -24,25 +24,28 @@ work_items:
     goal: G-BENCHMARK
     milestone: M-FOUNDATION
     title: 建立评测合同、生成与验算工具及零售基准
-    status: ready
+    status: completed
     priority: P0
     acceptance:
       - 零售基准含 150 张以上有关联的非空业务表以及可独立验算的自然语言 QA。
       - 候选输入与评分资料分别生成，发布束可重建并通过格式、覆盖和结果验证。
       - 本阶段完成 CR、PR、Merge，记录远端提交和验证证据。
-    next_action: 实现合同、生成器、零售业务模型与独立评分。
+    next_action: 关闭零售阶段并接续四行业。
+    "summary": "零售真实 Doris 装载与逐项复核通过，公开 PR #1 已合并。"
+    "evidence": [".awr/artifacts/benchmark/foundation-receipt.json"]
+    "verification": {"evidence_level":"locally_verified"}
   - id: BENCH-002
     goal: G-BENCHMARK
     milestone: M-COVERAGE
     title: 扩展制造、物流、订阅和批发四套基准
-    status: ready
+    status: in_progress
     priority: P0
     depends_on: [BENCH-001]
     acceptance:
       - 四个领域各有 150 张以上有实际关系且可加载的表，与零售构成五级数据治理梯度。
       - 四套 QA 和完整业务任务覆盖具备独立答案、错口径和最小权限测试。
       - 本阶段完成 CR、PR、Merge，记录远端提交和验证证据。
-    next_action: 完成各行业过程、关联样本、缺陷及业务测题。
+    next_action: 逐行业实现并交叉核对质量梯度、问题和答案。
   - id: BENCH-003
     goal: G-BENCHMARK
     milestone: M-DELIVERY

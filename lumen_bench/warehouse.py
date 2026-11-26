@@ -1,5 +1,6 @@
 """Compile Doris tables, lineage, and deliberate quality defects from journals."""
-from dataclasses import dataclass, replace
+
+from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
 import re
@@ -8,8 +9,16 @@ from .fixtures import START, END, Journals, aggregate, entities
 from .model import Domain, Measure
 
 SAFE_IDENTIFIER = re.compile(r"[a-z][a-z0-9_]{0,62}\Z")
-KNOWN_FAULTS = ("replay", "wrong_day", "state_filter", "scope_loss", "unit_scale", "fanout",
-                "stale_snapshot", "test_copy")
+KNOWN_FAULTS = (
+    "replay",
+    "wrong_day",
+    "state_filter",
+    "scope_loss",
+    "unit_scale",
+    "fanout",
+    "stale_snapshot",
+    "test_copy",
+)
 
 
 def ident(name):
@@ -112,10 +121,9 @@ FIELDS = {
 }
 
 
-def columns(domain, keys, measures=()):
+def columns(domain, keys, measures=(), *, documented):
     metrics: dict[str, Measure] = {m.key: m for m in measures}
-    entity_aliases = {f"{item.key}_id": f"{item.legacy}bh"
-                      for item in entities(domain) if item.legacy}
+    entity_aliases = {f"{item.key}_id": f"{item.legacy}bh" for item in entities(domain) if item.legacy}
     result = []
     for key in keys:
         if key in metrics or key.startswith("total_"):
@@ -132,7 +140,7 @@ def columns(domain, keys, measures=()):
         name = short_name if domain.quality == 1 else key
         while name in [c.name for c in result]:
             name += "2"
-        result.append(Column(key, name, field_type, text if domain.quality >= 4 else ""))
+        result.append(Column(key, name, field_type, text if documented else ""))
     return tuple(result)
 
 
@@ -143,13 +151,25 @@ def names(domain, process):
         return tuple(f"{prefix}_{process.legacy}" for prefix in ("ls", "f", "hz", "yf"))
     if domain.quality == 2:
         source = process.source
-        return (f"src_{source}_{process.key}", f"{source}_f_{process.key}",
-                f"{source}_dm_{process.key}_day", f"{source}_rpt_{process.key}_month")
+        return (
+            f"src_{source}_{process.key}",
+            f"{source}_f_{process.key}",
+            f"{source}_dm_{process.key}_day",
+            f"{source}_rpt_{process.key}_month",
+        )
     if domain.quality == 3:
-        return (f"stg_{process.source}_{process.key}", f"dwd_{process.key}",
-                f"mart_{process.source}_{process.key}_day", f"rpt_{process.key}_month")
-    return (f"ods_{process.key}_cdc", f"dwd_{process.key}",
-            f"dws_{process.key}_day_site", f"ads_{process.key}_month_{process.sums_scope}")
+        return (
+            f"stg_{process.source}_{process.key}",
+            f"dwd_{process.key}",
+            f"mart_{process.source}_{process.key}_day",
+            f"rpt_{process.key}_month",
+        )
+    return (
+        f"ods_{process.key}_cdc",
+        f"dwd_{process.key}",
+        f"dws_{process.key}_day_site",
+        f"ads_{process.key}_month_{process.sums_scope}",
+    )
 
 
 def raw_versions(rows, process, quality):
@@ -160,11 +180,9 @@ def raw_versions(rows, process, quality):
             prior = dict(row)
             if quality >= 4:
                 prior["state"] = process.states[-1]
-            result.append(dict(ingest_id=len(result) + 1, version=1,
-                               captured_day=row["business_day"], **prior))
+            result.append(dict(ingest_id=len(result) + 1, version=1, captured_day=row["business_day"], **prior))
         version = 2 if index % replay_every == 0 else 1
-        result.append(dict(ingest_id=len(result) + 1, version=version,
-                           captured_day=row["business_day"], **row))
+        result.append(dict(ingest_id=len(result) + 1, version=version, captured_day=row["business_day"], **row))
     return result
 
 
@@ -174,10 +192,11 @@ def projection(table, keys, alias="f"):
 
 def aggregate_sql(table, keys, measures, *, where="", from_extra=""):
     group = projection(table, keys)
-    metrics = ", ".join(f"SUM(f.{ident(table.physical(m.key))}) AS {ident('total_' + m.key)}"
-                        for m in measures)
-    return (f"SELECT {group}, COUNT(*) AS event_count, {metrics}\n"
-            f"FROM {ident(table.name)} f{from_extra}{where}\nGROUP BY {group};\n")
+    metrics = ", ".join(f"SUM(f.{ident(table.physical(m.key))}) AS {ident('total_' + m.key)}" for m in measures)
+    return (
+        f"SELECT {group}, COUNT(*) AS event_count, {metrics}\n"
+        f"FROM {ident(table.name)} f{from_extra}{where}\nGROUP BY {group};\n"
+    )
 
 
 def build(domain: Domain, journals: Journals) -> Warehouse:
@@ -187,59 +206,128 @@ def build(domain: Domain, journals: Journals) -> Warehouse:
     def register(name, kind, rows, keys, refs=(), note="", measures=(), upstream=()):
         if name in tables or not rows:
             raise ValueError(f"duplicate or empty table: {name}")
-        table = Table(name, kind, columns(domain, tuple(rows[0]), measures),
-                      tuple(keys), rows, tuple(refs), note if full_metadata else "", tuple(upstream))
+        documented = full_metadata or (
+            domain.quality == 3
+            and name.startswith(("dim_", "stg_ops_", "stg_billing_", "mart_ops_", "mart_billing_"))
+        )
+        table = Table(
+            name,
+            kind,
+            columns(domain, tuple(rows[0]), measures, documented=documented),
+            tuple(keys),
+            rows,
+            tuple(refs),
+            note if documented else "",
+            tuple(upstream),
+        )
         tables[name] = table
         return table
 
     days = [(START + timedelta(days=i)).isoformat() for i in range((END - START).days + 1)]
-    calendar = register("rq_k" if domain.quality == 1 else "dim_calendar", "dimension",
-                        [{"business_day": day, "business_month": day[:8] + "01"} for day in days],
-                        ("business_day",), note="经营日历，含次年结算缓冲期")
+    calendar = register(
+        "rq_k" if domain.quality == 1 else "dim_calendar",
+        "dimension",
+        [{"business_day": day, "business_month": day[:8] + "01"} for day in days],
+        ("business_day",),
+        note="经营日历，含次年结算缓冲期",
+    )
     for spec in entities(domain):
         table_name = f"{spec.legacy}_da" if domain.quality == 1 else f"dim_{spec.key}"
         refs = [Reference(f"{parent}_id", dims[parent].name, "id") for parent in spec.parents]
-        current = register(table_name, "dimension", journals.dimensions[spec.key], ("id",),
-                           refs, f"{spec.title}当前业务快照，每个业务主键一行")
+        current = register(
+            table_name,
+            "dimension",
+            journals.dimensions[spec.key],
+            ("id",),
+            refs,
+            f"{spec.title}当前业务快照，每个业务主键一行",
+        )
         dims[spec.key] = current
         if spec.history:
             rows = []
             for row in current.rows:
                 rows += [
-                    dict(id=row["id"], version=1, valid_from="2024-01-01", valid_to="2025-07-01",
-                         name=row["name"] + "（调整前）", **{"class": row["class"]}),
-                    dict(id=row["id"], version=2, valid_from="2025-07-01", valid_to="2027-01-01",
-                         name=row["name"], **{"class": row["class"]}),
+                    dict(
+                        id=row["id"],
+                        version=1,
+                        valid_from="2024-01-01",
+                        valid_to="2025-07-01",
+                        name=row["name"] + "（调整前）",
+                        **{"class": row["class"]},
+                    ),
+                    dict(
+                        id=row["id"],
+                        version=2,
+                        valid_from="2025-07-01",
+                        valid_to="2027-01-01",
+                        name=row["name"],
+                        **{"class": row["class"]},
+                    ),
                 ]
             name = f"{spec.legacy}_ls" if domain.quality == 1 else f"dim_{spec.key}_history"
-            register(name, "history", rows, ("id", "version"),
-                     [Reference("id", current.name, "id")],
-                     f"{spec.title}二型历史，按左闭右开时间关联", upstream=[current.name])
+            register(
+                name,
+                "history",
+                rows,
+                ("id", "version"),
+                [Reference("id", current.name, "id")],
+                f"{spec.title}二型历史，按左闭右开时间关联",
+                upstream=[current.name],
+            )
 
     for process in domain.processes:
         ods_name, fact_name, daily_name, monthly_name = names(domain, process)
         rows = journals.facts[process.key]
         measures = process.measures
         links = [Reference("business_day", calendar.name, "business_day")]
-        links += [Reference(f"{dim}_id", dims[dim].name, "id")
-                  for dim in ("site", *process.dimensions)]
+        links += [Reference(f"{dim}_id", dims[dim].name, "id") for dim in ("site", *process.dimensions)]
         if process.after:
             links.append(Reference("parent_record_id", facts[process.after].name, "record_id"))
-        ods = register(ods_name, "raw", raw_versions(rows, process, domain.quality), ("ingest_id",),
-                       links, f"{process.title}源采集；含原记录及变更重放", measures)
-        fact = register(fact_name, "fact", rows, ("record_id",), links,
-                        f"{process.title}；一行一业务事件。{process.note}", measures, [ods.name])
+        ods = register(
+            ods_name,
+            "raw",
+            raw_versions(rows, process, domain.quality),
+            ("ingest_id",),
+            links,
+            f"{process.title}源采集；含原记录及变更重放",
+            measures,
+        )
+        fact = register(
+            fact_name,
+            "fact",
+            rows,
+            ("record_id",),
+            links,
+            f"{process.title}；一行一业务事件。{process.note}",
+            measures,
+            [ods.name],
+        )
         facts[process.key] = fact
         daily_keys = ("business_day", "site_id")
         monthly_keys = ("business_month", f"{process.sums_scope}_id", "state")
-        register(daily_name, "daily", aggregate(rows, daily_keys, measures), daily_keys,
-                 [Reference("business_day", calendar.name, "business_day"),
-                  Reference("site_id", dims["site"].name, "id")],
-                 f"{process.title}日粒度网点统计，含所有业务状态", measures, [fact.name])
-        register(monthly_name, "monthly", aggregate(rows, monthly_keys, measures), monthly_keys,
-                 [Reference("business_month", calendar.name, "business_day"),
-                  Reference(f"{process.sums_scope}_id", dims[process.sums_scope].name, "id")],
-                 f"{process.title}按月、{process.sums_scope}与业务状态汇总", measures, [fact.name])
+        register(
+            daily_name,
+            "daily",
+            aggregate(rows, daily_keys, measures),
+            daily_keys,
+            [Reference("business_day", calendar.name, "business_day"), Reference("site_id", dims["site"].name, "id")],
+            f"{process.title}日粒度网点统计，含所有业务状态",
+            measures,
+            [fact.name],
+        )
+        register(
+            monthly_name,
+            "monthly",
+            aggregate(rows, monthly_keys, measures),
+            monthly_keys,
+            [
+                Reference("business_month", calendar.name, "business_day"),
+                Reference(f"{process.sums_scope}_id", dims[process.sums_scope].name, "id"),
+            ],
+            f"{process.title}按月、{process.sums_scope}与业务状态汇总",
+            measures,
+            [fact.name],
+        )
         if domain.quality >= 4 or (domain.quality == 3 and process.source in {"ops", "billing"}):
             business_id = ident(ods.physical("record_id"))
             version = ident(ods.physical("version"))
@@ -280,18 +368,28 @@ def build(domain: Domain, journals: Journals) -> Warehouse:
             first = measures[0]
             rows = [dict(r, **{first.key: r[first.key] * 100}) for r in rows]
         elif flaw.fault == "fanout":
-            rows = [r for r in rows for _ in ("原件", "复核件")]
-            from_extra = " CROSS JOIN (SELECT 1 AS copy_no UNION ALL SELECT 2) t"
+            site_history = tables["wd_ls" if domain.quality == 1 else "dim_site_history"]
+            rows = [r for r in rows for h in site_history.rows if h["id"] == r["site_id"]]
+            from_extra = (
+                f" JOIN {ident(site_history.name)} h "
+                f"ON f.{ident(table.physical('site_id'))} = h.{ident(site_history.physical('id'))}"
+            )
         elif flaw.fault == "stale_snapshot":
             rows = [r for r in rows if r["business_day"] < "2025-10-01"]
             where = f" WHERE f.{ident(table.physical('business_day'))} < '2025-10-01'"
         elif flaw.fault == "test_copy":
             rows = [r for r in rows if r["record_id"] <= 40]
             where = f" WHERE f.{ident(table.physical('record_id'))} <= 40"
-        shadow = register(flaw.table, "shadow", aggregate(rows, keys, measures), keys,
-                          [Reference(keys[0], calendar.name, "business_day"),
-                           Reference("site_id", dims["site"].name, "id")],
-                          flaw.note, measures, [source.name])
+        shadow = register(
+            flaw.table,
+            "shadow",
+            aggregate(rows, keys, measures),
+            keys,
+            [Reference(keys[0], calendar.name, "business_day"), Reference("site_id", dims["site"].name, "id")],
+            flaw.note,
+            measures,
+            [source.name],
+        )
         query = aggregate_sql(source, keys, measures, where=where, from_extra=from_extra)
         if flaw.fault == "unit_scale":
             metric = f"SUM(f.{ident(table.physical(measures[0].key))})"

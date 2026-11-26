@@ -1,4 +1,6 @@
 """Domain vocabulary shared by the fixture compiler and the reference evaluator."""
+
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 import json
@@ -45,6 +47,8 @@ class Process:
     sums_scope: str = "site"
     note: str = ""
     parent_states: tuple[str, ...] = ()
+    panel: str = ""
+    enrich: Callable | None = None
 
 
 @dataclass(frozen=True)
@@ -78,15 +82,44 @@ class Domain:
 
 
 def entity(key, title, labels, groups, parents="", *, legacy="", history=False):
-    return Entity(key, title, tuple(labels.split("|")), tuple(groups.split("|")),
-                  tuple(parents.split()), legacy, history)
+    return Entity(
+        key, title, tuple(labels.split("|")), tuple(groups.split("|")), tuple(parents.split()), legacy, history
+    )
 
 
-def process(key, title, refs, measures, states, source, *, rows=180, after=None,
-            legacy="", scope="site", note="", parent_states=""):
-    return Process(key, title, tuple(refs.split()), tuple(measures), tuple(states.split("|")),
-                   source, rows, after, legacy, scope, note,
-                   tuple(parent_states.split("|")) if parent_states else ())
+def process(
+    key,
+    title,
+    refs,
+    measures,
+    states,
+    source,
+    *,
+    rows=180,
+    after=None,
+    legacy="",
+    scope="site",
+    note="",
+    parent_states="",
+    panel="",
+    enrich=None,
+):
+    return Process(
+        key,
+        title,
+        tuple(refs.split()),
+        tuple(measures),
+        tuple(states.split("|")),
+        source,
+        rows,
+        after,
+        legacy,
+        scope,
+        note,
+        tuple(parent_states.split("|")) if parent_states else (),
+        panel,
+        enrich,
+    )
 
 
 def count(key, title, lo=1, hi=80, *, legacy="sl"):
