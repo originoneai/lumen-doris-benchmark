@@ -1,0 +1,21 @@
+[project]
+name = "Lumen Doris Benchmark"
+external_key = "originoneai-lumen-doris-benchmark"
+authority_mode = "source_first"
+authorized_roots = []
+
+[[sources]]
+domain = "ledger"
+role = "primary"
+path = "work-ledger.yaml"
+adapter = "yaml-ledger-v1"
+
+[sources.options]
+
+[[sources]]
+domain = "rules"
+role = "primary"
+path = "AGENTS.md"
+adapter = "markdown-rules-v1"
+
+[sources.options]

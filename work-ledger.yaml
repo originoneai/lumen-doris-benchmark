@@ -1,0 +1,57 @@
+goals:
+  - id: G-BENCHMARK
+    title: 五套企业级 Doris 数据 Agent 评测
+    status: active
+    success_criteria:
+      - 五个行业质量梯度各有独立 Doris 数据库、至少 150 张非空有业务关系表及相应建设资料。
+      - 每套覆盖建模、本体、单轮、多轮、探索、报告、反例与安全，并保存独立可验证答案。
+      - 五库实际发布、逐表验证、核对评测答案与覆盖、分阶段完成 CR、PR、Merge。
+milestones:
+  - id: M-FOUNDATION
+    goal: G-BENCHMARK
+    title: 零售与公共评分工具
+    status: in_progress
+  - id: M-COVERAGE
+    goal: G-BENCHMARK
+    title: 其余四行业与治理梯度
+    status: planned
+  - id: M-DELIVERY
+    goal: G-BENCHMARK
+    title: Doris 部署与交付
+    status: planned
+work_items:
+  - id: BENCH-001
+    goal: G-BENCHMARK
+    milestone: M-FOUNDATION
+    title: 建立评测合同、生成与验算工具及零售基准
+    status: ready
+    priority: P0
+    acceptance:
+      - 零售基准含 150 张以上有关联的非空业务表以及可独立验算的自然语言 QA。
+      - 候选输入与评分资料分别生成，发布束可重建并通过格式、覆盖和结果验证。
+      - 本阶段完成 CR、PR、Merge，记录远端提交和验证证据。
+    next_action: 实现合同、生成器、零售业务模型与独立评分。
+  - id: BENCH-002
+    goal: G-BENCHMARK
+    milestone: M-COVERAGE
+    title: 扩展制造、物流、订阅和批发四套基准
+    status: ready
+    priority: P0
+    depends_on: [BENCH-001]
+    acceptance:
+      - 四个领域各有 150 张以上有实际关系且可加载的表，与零售构成五级数据治理梯度。
+      - 四套 QA 和完整业务任务覆盖具备独立答案、错口径和最小权限测试。
+      - 本阶段完成 CR、PR、Merge，记录远端提交和验证证据。
+    next_action: 完成各行业过程、关联样本、缺陷及业务测题。
+  - id: BENCH-003
+    goal: G-BENCHMARK
+    milestone: M-DELIVERY
+    title: 五个 Doris 独立数据库及基准交付
+    status: ready
+    priority: P0
+    depends_on: [BENCH-002]
+    acceptance:
+      - 在获准的 Doris 实例创建五套专用库并逐表验证数据、结构及关系。
+      - 每套数值 QA 经 Doris 实际执行与独立答案核对，偏差有可追溯裁定。
+      - 交付用户指南与本地黄金答案路径，完成 CR、PR、Merge 并核对远端提交。
+    next_action: 绑定获准实例并核对五套数据、QA 和交付物。
