@@ -44,6 +44,17 @@ def dump_json(data):
     return json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
 
 
+def candidate_fingerprint(candidate):
+    digest = sha256()
+    for item in sorted(candidate.rglob("*")):
+        if item.is_symlink():
+            raise ValueError(f"symlink in candidate bundle: {item}")
+        if item.is_file():
+            digest.update(str(item.relative_to(candidate)).encode() + b"\0")
+            digest.update(sha256(item.read_bytes()).digest())
+    return digest.hexdigest()
+
+
 def jsonl(rows):
     return "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows)
 
@@ -338,12 +349,7 @@ def export(key, seed, output):
             "评测日期为 2026 年 3 月 1 日。经营日历和金额单位以各系统的资料为准。\n",
             encoding="utf-8",
         )
-        candidate_digest = sha256()
-        for item in sorted(candidate.rglob("*")):
-            if item.is_file():
-                candidate_digest.update(str(item.relative_to(candidate)).encode() + b"\0")
-                candidate_digest.update(sha256(item.read_bytes()).digest())
-        status["candidate_sha256"] = candidate_digest.hexdigest()
+        status["candidate_sha256"] = candidate_fingerprint(candidate)
         (evaluator / "gold.jsonl").write_text(jsonl(gold), encoding="utf-8")
         (evaluator / "reference-sql.jsonl").write_text(jsonl(sql), encoding="utf-8")
         (evaluator / "physical-rows.json").write_text(dump_json(table_index), encoding="utf-8")

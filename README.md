@@ -4,13 +4,13 @@
 
 | 数据集 | 独立数据库 | 建设质量 | 业务表 | 评测任务 |
 |---|---|---|---:|---:|
-| 零售 | `lumen_bench_retail_v1` | 统一建模与完整文档 | 158 | 30 |
-| 制造 | `lumen_bench_manufacturing_v1` | 治理较好，保留旧口径 | 161 | 31 |
-| 物流 | `lumen_bench_logistics_v1` | 部分治理，流程与账单分域 | 165 | 31 |
-| SaaS 订阅 | `lumen_bench_subscription_v1` | 部门烟囱，分歧口径 | 172 | 31 |
-| 批发 | `lumen_bench_wholesale_v1` | 拼音缩写、弱文档、重复与错误 ETL | 186 | 35 |
+| 零售 | `lumen_bench_retail_v1` | 统一建模与完整文档 | 158 | 32 |
+| 制造 | `lumen_bench_manufacturing_v1` | 治理较好，保留旧口径 | 161 | 33 |
+| 物流 | `lumen_bench_logistics_v1` | 部分治理，流程与账单分域 | 165 | 33 |
+| SaaS 订阅 | `lumen_bench_subscription_v1` | 部门烟囱，分歧口径 | 172 | 33 |
+| 批发 | `lumen_bench_wholesale_v1` | 拼音缩写、弱文档、重复与错误 ETL | 186 | 37 |
 
-指标为默认种子 `7719` 的生成结果，专用发布标记表单列。[数仓设计](docs/warehouses.md)
+指标为默认种子 `7719` 的生成结果，专用发布标记表单列。[数仓设计](docs/warehouses.md) · [Doris 实测报告](docs/release-v1.md) · [下载五套候选包](https://github.com/originoneai/lumen-doris-benchmark/releases/tag/v1.0.0)
 
 ## 生成评测基准
 
@@ -44,12 +44,20 @@ python3 -m lumen_bench verify-doris retail \
 
 ## 执行评测
 
-从实际业务客户端加入一个候选环境，按 [评测协议](docs/evaluation.md) 发起自然语言会话并保留真实产物。需要分析与复核时，把二者交给不同人员。使用结构化提取结果与黄金答案评分。
+从实际业务客户端发起自然语言会话。可以先生成一个任务的独立会话输入、角色、工作步骤和取证路径。完整流程见 [评测协议](docs/evaluation.md)。
+
+```bash
+python3 -m lumen_bench plan-run --bundle build/retail-v1 \
+  --scenario retail/RPT-01 --output build/retail-report-run
+```
+
+把回答和工具回执交给独立评估者，再将结构化结果与黄金答案比较。
 
 ```bash
 python3 -m lumen_bench grade \
   --gold build/retail-v1/evaluator/gold.jsonl \
   --observations build/retail-observed.jsonl \
+  --tasks build/retail-v1/candidate/tasks.jsonl \
   --output build/retail-score.json
 ```
 
