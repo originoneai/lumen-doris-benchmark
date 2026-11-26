@@ -1,4 +1,6 @@
 """Grade independently captured structured observations against evaluator-only gold."""
+
+from collections import Counter, defaultdict
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 import json
@@ -18,8 +20,7 @@ def key_of(row):
 
 def normalize_numeric(value):
     if isinstance(value, list):
-        return [{"key": [str(k) for k in row["key"]], "value": normalize_numeric(row["value"])}
-                for row in value]
+        return [{"key": [str(k) for k in row["key"]], "value": normalize_numeric(row["value"])} for row in value]
     return display_number(Decimal(str(value)))
 
 
@@ -46,13 +47,18 @@ def grade(gold, actual):
             reviewer = observation.get("reviewer")
             evidence = observation.get("evidence")
             outcome = observation.get("outcome")
-            if (not performer or not reviewer or performer == reviewer or not evidence
-                    or outcome not in {"pass", "fail"}):
+            if (
+                not performer
+                or not reviewer
+                or performer == reviewer
+                or not evidence
+                or outcome not in {"pass", "fail"}
+            ):
                 state = "review_pending"
             else:
                 state = outcome
         elif item["rule"] == "exact":
-            state = "pass" if "value" in observation and observation["value"] == item["expected"] else "fail"
+            state = "pass" if "value" in observation and same_json(observation["value"], item["expected"]) else "fail"
         else:
             try:
                 answer = normalize_numeric(observation["value"])
@@ -68,3 +74,28 @@ def grade(gold, actual):
     if supplied:
         raise ValueError(f"observations do not belong to this benchmark: {sorted(supplied)[:4]}")
     return result
+
+
+def same_json(left, right):
+    return json.dumps(left, sort_keys=True) == json.dumps(right, sort_keys=True)
+
+
+def summarize(tasks, results):
+    by_id = defaultdict(list)
+    for row in results:
+        by_id[row["case"]].append(row["status"])
+    states = defaultdict(Counter)
+    for task in tasks:
+        checks = by_id.pop(task["id"], ())
+        if not checks:
+            raise ValueError(f"task did not have gold checks: {task['id']}")
+        if "fail" in checks:
+            status = "fail"
+        elif all(state == "pass" for state in checks):
+            status = "pass"
+        else:
+            status = "incomplete"
+        states[task["family"]][status] += 1
+    if by_id:
+        raise ValueError("some graded checks do not match the task list")
+    return {family: dict(counts) for family, counts in states.items()}

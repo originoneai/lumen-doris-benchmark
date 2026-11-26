@@ -4,7 +4,8 @@ import tempfile
 import unittest
 
 from lumen_bench.doris import verify_database_name
-from lumen_bench.grading import grade, load_lines
+from lumen_bench.grading import grade, load_lines, summarize
+from lumen_bench.scenario import plan_run
 from lumen_bench.model import CONTRACT
 from lumen_bench.suite import assemble, export
 
@@ -103,6 +104,42 @@ class GradingTest(unittest.TestCase):
         observed[1]["reviewer"] = "different"
         observed.append({**key, "check": "decision", "value": "clarify"})
         self.assertTrue(all(r["status"] == "pass" for r in grade(gold, observed)))
+
+
+class ScenarioPackageTest(unittest.TestCase):
+    def test_isolated_long_cases_bind_release_without_exposing_answers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            bundle = base / "bundle"
+            export("retail", CONTRACT["default_seed"], bundle)
+            first = plan_run(bundle, base / "one", ("retail/RPT-01", "retail/EXP-01"))
+            second = plan_run(bundle, base / "two", ("retail/RPT-01",))
+            self.assertNotEqual(first["run"], second["run"])
+            self.assertEqual(len(first["cases"]), 2)
+            for item in first["cases"]:
+                plan_file = base / "one" / item["plan"]
+                plan = json.loads(plan_file.read_text())
+                self.assertEqual(plan["status"], "planned")
+                self.assertEqual(plan["fixture"]["candidate_sha256"], first["candidate_sha256"])
+                self.assertEqual(len(plan["inputs"]), 3)
+                self.assertEqual(plan["workflow"][-2]["actor"], "independent_reviewer")
+                self.assertEqual(plan["workflow"][-1]["step"], "delivery")
+                for name in plan["inputs"]:
+                    prompt = (plan_file.parent / name).read_text()
+                    self.assertNotIn(plan["id"], prompt)
+                self.assertFalse((plan_file.parent / "evaluator").exists())
+            with (bundle / "candidate" / "tasks.jsonl").open("a", encoding="utf-8") as out:
+                out.write("\n")
+            with self.assertRaises(ValueError):
+                plan_run(bundle, base / "three")
+
+    def test_missing_check_keeps_case_incomplete_in_score(self):
+        tasks = [{"id": "retail/RPT-01", "family": "report"}]
+        checks = [
+            {"case": "retail/RPT-01", "status": "pass"},
+            {"case": "retail/RPT-01", "status": "missing"},
+        ]
+        self.assertEqual(summarize(tasks, checks), {"report": {"incomplete": 1}})
 
 
 if __name__ == "__main__":
