@@ -1,4 +1,5 @@
 """Provision and verify only the versioned fixture databases on a pinned cluster."""
+
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -13,7 +14,7 @@ import time
 
 from .model import ALLOWED_DATABASES, CONTRACT
 from .suite import assemble, assert_etl, assert_reference_checks, canonical_table_rows, dump_json, row_digest
-from .warehouse import ident
+from .warehouse import ident, literal
 
 MARKER = "bench_release_contract"
 PREFLIGHT_FIELDS = {
@@ -50,8 +51,20 @@ def connection_settings(path, ssh_host):
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     forward = f"127.0.0.1:{port}:{settings['host']}:{settings['port']}"
-    command = ["ssh", "-T", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes",
-               "-o", "ConnectTimeout=8", "-L", forward, ssh_host]
+    command = [
+        "ssh",
+        "-T",
+        "-N",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-o",
+        "ConnectTimeout=8",
+        "-L",
+        forward,
+        ssh_host,
+    ]
     with subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as tunnel:
         try:
             for _ in range(60):
@@ -86,16 +99,39 @@ def inspect_cluster(db, endpoint, cluster_id):
             )
     frontends = topology["SHOW FRONTENDS"]
     backends = topology["SHOW BACKENDS"]
-    frontend = next((row for row in frontends
-                     if str(row.get("ClusterId")) == str(cluster_id)
-                     and row.get("Host") == endpoint["host"]
-                     and str(row.get("QueryPort")) == str(endpoint["port"])), None)
-    if (not frontend or str(frontend.get("Alive", "")).lower() != "true"
-            or {str(r.get("ClusterId")) for r in frontends} != {str(cluster_id)}
-            or not backends
-            or any(str(r.get("Alive", "")).lower() != "true" for r in backends)
-            or sum(str(r.get("IsMaster", "")).lower() == "true" for r in frontends) != 1):
+    frontend = next(
+        (
+            row
+            for row in frontends
+            if str(row.get("ClusterId")) == str(cluster_id)
+            and row.get("Host") == endpoint["host"]
+            and str(row.get("QueryPort")) == str(endpoint["port"])
+        ),
+        None,
+    )
+    if (
+        not frontend
+        or str(frontend.get("Alive", "")).lower() != "true"
+        or {str(r.get("ClusterId")) for r in frontends} != {str(cluster_id)}
+        or not backends
+        or any(str(r.get("Alive", "")).lower() != "true" for r in backends)
+        or sum(str(r.get("IsMaster", "")).lower() == "true" for r in frontends) != 1
+    ):
         raise RuntimeError("authorized Doris FE/BE topology could not be verified")
+    with db.cursor() as cursor:
+        disks = {}
+        for backend in backends:
+            backend_id = str(backend.get("BackendId", ""))
+            if not backend_id.isdecimal():
+                raise RuntimeError("invalid Doris BE ID")
+            cursor.execute(f"SHOW PROC '/backends/{backend_id}'")
+            names = [field[0] for field in cursor.description]
+            fields = ("RootPath", "State", "StorageMedium")
+            rows = [{key: row[names.index(key)] for key in fields if key in names} for row in cursor.fetchall()]
+            if not rows or any(not row.get("RootPath") for row in rows):
+                raise RuntimeError("Doris backend storage paths could not be verified")
+            disks[backend_id] = sorted(rows, key=lambda row: row["RootPath"])
+        topology["backend_disks"] = disks
     return topology
 
 
@@ -148,8 +184,10 @@ def initialize(connect, domain, seed, fingerprint, mode, wanted_tables):
             DISTRIBUTED BY HASH (contract_version) BUCKETS 1
             PROPERTIES ("replication_num" = "1")
             """)
-            cursor.execute(f"INSERT INTO {ident(MARKER)} VALUES (%s, %s, %s, %s)",
-                           (CONTRACT["version"], domain.key, seed, fingerprint))
+            cursor.execute(
+                f"INSERT INTO {ident(MARKER)} VALUES (%s, %s, %s, %s)",
+                (CONTRACT["version"], domain.key, seed, fingerprint),
+            )
         elif MARKER not in existing or existing - (wanted_tables | {MARKER}):
             raise RuntimeError("existing database is outside the fixture ownership contract")
         cursor.execute(f"SELECT contract_version, dataset, seed, checksum FROM {ident(MARKER)}")
@@ -159,6 +197,19 @@ def initialize(connect, domain, seed, fingerprint, mode, wanted_tables):
 
 
 def verify_table(cursor, table, expected_sha):
+    cursor.execute(f"SHOW CREATE TABLE {ident(table.name)}")
+    definition = cursor.fetchone()[1]
+    key_list = ", ".join(ident(table.physical(k)) for k in table.keys)
+    distribution = ident(table.physical(table.keys[0]))
+    compact = re.sub(r"\s+", "", definition)
+    if (
+        "ENGINE=OLAP" not in compact
+        or f"DUPLICATEKEY({key_list.replace(' ', '')})" not in compact
+        or f"DISTRIBUTEDBYHASH({distribution})BUCKETS1" not in compact
+        or 'replication_allocation"="tag.location.default:1"' not in compact
+        or (table.note and f"COMMENT {literal(table.note)}" not in definition)
+    ):
+        raise RuntimeError(f"table storage definition mismatch for {table.name}")
     cursor.execute(f"SHOW FULL COLUMNS FROM {ident(table.name)}")
     keys = [d[0] for d in cursor.description]
     columns = [dict(zip(keys, row, strict=True)) for row in cursor.fetchall()]
@@ -173,8 +224,12 @@ def verify_table(cursor, table, expected_sha):
             allowed_types.add("BIGINT(20)")
         if expected.sql_type.startswith("DECIMAL"):
             allowed_types.add(expected.sql_type.replace("DECIMAL", "DECIMALV3"))
-        if (found["Field"] != expected.name or actual_type not in allowed_types
-                or found["Null"] != "NO" or str(found["Comment"] or "") != expected.description):
+        if (
+            found["Field"] != expected.name
+            or actual_type not in allowed_types
+            or found["Null"] != "NO"
+            or str(found["Comment"] or "") != expected.description
+        ):
             raise RuntimeError(f"column definition mismatch for {table.name}.{expected.name}")
     columns = ", ".join(ident(column.name) for column in table.columns)
     cursor.execute(f"SELECT {columns} FROM {ident(table.name)}")
@@ -204,9 +259,11 @@ def publish(dataset, seed, path, cluster_id, mode, ssh_host, workers, receipt):
     checksum, table_rows = dataset_identity(warehouse)
     started = datetime.now(timezone.utc)
     with connection_settings(path, ssh_host) as (endpoint, settings):
+
         def connect():
-            return pymysql.connect(**settings, connect_timeout=6, read_timeout=100, write_timeout=60,
-                                   autocommit=True, charset="utf8mb4")
+            return pymysql.connect(
+                **settings, connect_timeout=6, read_timeout=100, write_timeout=60, autocommit=True, charset="utf8mb4"
+            )
 
         with connect() as admin:
             baseline = inspect_cluster(admin, endpoint, cluster_id)
@@ -252,14 +309,23 @@ def publish(dataset, seed, path, cluster_id, mode, ssh_host, workers, receipt):
             if after != baseline:
                 raise RuntimeError("Doris FE/BE identity changed during execution")
     result = {
-        **summary, "mode": mode, "dataset_sha256": checksum, "doris_tables_verified": len(checks),
-        "doris_rows_verified": sum(checks.values()), "doris_reference_checks": reference_count,
+        **summary,
+        "mode": mode,
+        "dataset_sha256": checksum,
+        "doris_tables_verified": len(checks),
+        "doris_rows_verified": sum(checks.values()),
+        "doris_reference_checks": reference_count,
         "doris_etl_cross_checks": etl_count,
-        "started_at": started.isoformat(), "verified_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": started.isoformat(),
+        "verified_at": datetime.now(timezone.utc).isoformat(),
     }
     private = {
-        **result, "target_cluster": str(cluster_id), "target_endpoint": f"{endpoint['host']}:{endpoint['port']}",
-        "topology_before": baseline, "topology_after": after, "table_rows_verified": checks,
+        **result,
+        "target_cluster": str(cluster_id),
+        "target_endpoint": f"{endpoint['host']}:{endpoint['port']}",
+        "topology_before": baseline,
+        "topology_after": after,
+        "table_rows_verified": checks,
         "row_digests": table_rows,
     }
     receipt.parent.mkdir(parents=True, exist_ok=True)

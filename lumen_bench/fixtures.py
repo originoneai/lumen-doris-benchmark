@@ -1,4 +1,6 @@
 """Generate the original business journals before compiling any warehouse tables."""
+
+from calendar import monthrange
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -22,8 +24,7 @@ class Journals:
 def entities(domain: Domain):
     return (
         entity("region", "经营区域", "|".join(REGIONS), "沿海|内陆", legacy="qy"),
-        entity("site", "经营网点", "|".join(domain.sites), "自营|联合运营", "region",
-               legacy="wd", history=True),
+        entity("site", "经营网点", "|".join(domain.sites), "自营|联合运营", "region", legacy="wd", history=True),
         *domain.entities,
     )
 
@@ -40,8 +41,10 @@ def generate(domain: Domain, seed: int) -> Journals:
             raise ValueError(f"duplicate dimension: {spec.key}")
         dimensions[spec.key] = [
             {
-                "id": index + 1, "code": f"{spec.key.upper()}-{index + 1:03}",
-                "name": label, "class": spec.groups[index % len(spec.groups)],
+                "id": index + 1,
+                "code": f"{spec.key.upper()}-{index + 1:03}",
+                "name": label,
+                "class": spec.groups[index % len(spec.groups)],
                 **{f"{parent}_id": index % len(dimensions[parent]) + 1 for parent in spec.parents},
             }
             for index, label in enumerate(spec.labels)
@@ -49,7 +52,9 @@ def generate(domain: Domain, seed: int) -> Journals:
 
     facts = {}
     for spec in domain.processes:
-        if spec.key in facts or spec.rows < 48:
+        panel_rows = dimensions[spec.panel] if spec.panel else ()
+        row_count = 12 * len(panel_rows) if panel_rows else spec.rows
+        if spec.key in facts or row_count < 48 or (panel_rows and spec.after):
             raise ValueError(f"invalid process: {spec.key}")
         rng = rng_for(seed, domain.key, spec.key)
         parents = facts[spec.after] if spec.after else []
@@ -57,14 +62,22 @@ def generate(domain: Domain, seed: int) -> Journals:
             parents = [row for row in parents if row["state"] in spec.parent_states]
         if spec.after and not parents:
             raise ValueError(f"no eligible parent events for {spec.key}")
-        selected = (rng.sample(parents, spec.rows) if spec.rows <= len(parents)
-                    else rng.choices(parents, k=spec.rows)) if parents else [None] * spec.rows
+        selected = (
+            (rng.sample(parents, row_count) if row_count <= len(parents) else rng.choices(parents, k=row_count))
+            if parents
+            else [None] * row_count
+        )
         lines = []
         for index, parent in enumerate(selected, 1):
             if parent:
                 day = date.fromisoformat(parent["business_day"]) + timedelta(days=rng.randint(1, 24))
                 day = min(day, END)
                 site = parent["site_id"]
+            elif panel_rows:
+                month = 1 + (index - 1) // len(panel_rows)
+                day = date(2025, month, monthrange(2025, month)[1])
+                subject = panel_rows[(index - 1) % len(panel_rows)]
+                site = subject.get("site_id", 1 + (subject["id"] - 1) % len(dimensions["site"]))
             else:
                 first_of_month = date(2025, 1 + (index - 1) % 12, 1)
                 day = first_of_month + timedelta(days=rng.randrange(28))
@@ -79,7 +92,12 @@ def generate(domain: Domain, seed: int) -> Journals:
             }
             for dim in spec.dimensions:
                 field = f"{dim}_id"
-                row[field] = parent[field] if parent and field in parent else rng.choice(dimensions[dim])["id"]
+                if dim == spec.panel:
+                    row[field] = subject["id"]
+                elif parent and field in parent:
+                    row[field] = parent[field]
+                else:
+                    row[field] = rng.choice(dimensions[dim])["id"]
             if parent:
                 row["parent_record_id"] = parent["record_id"]
             for measure in spec.measures:
@@ -97,6 +115,8 @@ def generate(domain: Domain, seed: int) -> Journals:
                         value = Decimal(value + (day.month - 1) * (measure.hi // 79))
                         value = value.scaleb(-measure.decimals)
                     row[measure.key] = value
+            if spec.enrich:
+                spec.enrich(row, parent, rng)
             lines.append(row)
         facts[spec.key] = lines
     return Journals(dimensions, facts)

@@ -40,6 +40,51 @@ class RetailContractTest(unittest.TestCase):
                 verify_database_name(name)
 
 
+class IndustryMatrixTest(unittest.TestCase):
+    def test_each_industry_has_its_own_warehouse_and_full_coverage(self):
+        databases = set()
+        positive_cases = 0
+        negative_cases = 0
+        legacy_sizes = []
+        for key in CONTRACT["databases"]:
+            with self.subTest(dataset=key):
+                domain, warehouse, tasks, _, _, report = assemble(key, CONTRACT["default_seed"])
+                self.assertNotIn(report["database"], databases)
+                databases.add(report["database"])
+                self.assertGreaterEqual(report["tables"], CONTRACT["minimum_business_tables"])
+                self.assertEqual(report["connected_tables"], report["tables"])
+                self.assertEqual(report["reference_checks"], report["sqlite_reference_checks"])
+                self.assertEqual(report["etl_jobs"], report["sqlite_etl_cross_checks"])
+                self.assertGreaterEqual(len({p.source for p in domain.processes}), 5)
+                self.assertEqual(len(warehouse.facts), len(domain.processes))
+                self.assertTrue(
+                    all(len(x["turns"]) >= 3 for x in tasks if x["family"] in {"multi_turn", "explore", "report"})
+                )
+                positive_cases += report["tasks"] - report["coverage"]["counterexample"]
+                negative_cases += report["coverage"]["counterexample"]
+                legacy_sizes.append(report["legacy_marts"])
+        self.assertEqual(len(databases), 5)
+        self.assertGreaterEqual(positive_cases, 110)
+        self.assertGreaterEqual(negative_cases, 30)
+        self.assertEqual(legacy_sizes, sorted(set(legacy_sizes)))
+
+    def test_wholesale_retains_duplicates_bad_sql_and_obfuscated_metadata(self):
+        domain, warehouse, _, _, _, report = assemble("wholesale", CONTRACT["default_seed"])
+        self.assertEqual(report["commented_columns"], 0)
+        self.assertGreater(report["obfuscated_field_columns"], 1000)
+        self.assertGreaterEqual(report["legacy_marts"], 25)
+        self.assertGreaterEqual(report["duplicate_legacy_groups"], 3)
+        self.assertTrue({"test", "ceshi"} <= warehouse.tables.keys())
+        self.assertTrue({"replay", "fanout", "unit_scale", "scope_loss"} <= set(report["known_issue_types"]))
+        self.assertLess(sum(map(len, domain.documents.values())), 160)
+
+    def test_second_seed_changes_data_and_still_supports_each_task(self):
+        for key in CONTRACT["databases"]:
+            with self.subTest(dataset=key):
+                report = assemble(key, 7720)[-1]
+                self.assertEqual(report["reference_checks"], report["sqlite_reference_checks"])
+
+
 class GradingTest(unittest.TestCase):
     def test_grade_preserves_ranking_and_requires_independent_review(self):
         key = {"case": "demo", "turn": 1}
