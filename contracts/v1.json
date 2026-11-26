@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "default_seed": 7719,
+  "minimum_business_tables": 150,
+  "minimum_populated_rows": 10000,
+  "minimum_tasks": 30,
+  "minimum_tasks_by_family": {
+    "modeling": 3, "ontology": 3, "single_turn": 8, "multi_turn": 3,
+    "explore": 3, "report": 2, "counterexample": 5, "safety": 3
+  },
+  "minimum_oracle_checks": 30,
+  "scenario_turn_minimum": 3,
+  "databases": {
+    "retail": {"name": "lumen_bench_retail_v1", "quality_rank": 5},
+    "manufacturing": {"name": "lumen_bench_manufacturing_v1", "quality_rank": 4},
+    "logistics": {"name": "lumen_bench_logistics_v1", "quality_rank": 3},
+    "subscription": {"name": "lumen_bench_subscription_v1", "quality_rank": 2},
+    "wholesale": {"name": "lumen_bench_wholesale_v1", "quality_rank": 1}
+  }
+}

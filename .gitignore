@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+build/
+.env
+.env.*
+.awr/state.db*
+.awr/artifacts/
+.awr/cache/
+.awr/mutations/
+.awr/intake/
+
+# AWR local runtime state
+.awr/state.db
+.awr/state.db-*
+.awr/clients/
+.awr/executions/
